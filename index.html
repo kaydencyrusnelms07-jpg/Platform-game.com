@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cozy Parkour Adventure</title>
+<style>
+body { margin:0; overflow:hidden; font-family:sans-serif; background:#a7d7f9; }
+canvas { display:block; margin:auto; background:#a7d7f9; }
+#ui, #shopUI, #startScreen, #pauseMenu, #settingsMenu {
+  position: fixed; top:0; left:0; width:100%; height:100%; display:flex;
+  justify-content:center; align-items:center; flex-direction:column; color:#333;
+}
+#startScreen { background: rgba(200,240,255,0.9); z-index:10; }
+#startScreen button, #pauseMenu button, #shopUI button, #settingsMenu button { padding:15px 25px; margin:10px; font-size:18px; border:none; border-radius:10px; cursor:pointer; }
+#ui { top:10px; left:50%; transform:translateX(-50%); font-size:18px; z-index:5; display:flex; gap:20px; }
+#shopUI, #settingsMenu, #pauseMenu { background: rgba(255,255,255,0.9); display:none; z-index:10; flex-direction:column; color:#333; font-size:18px; }
+.joystick { position: fixed; bottom:20px; left:20px; width:100px; height:100px; border-radius:50%; background:rgba(255,255,255,0.3); z-index:5; touch-action:none; }
+.knob { position:absolute; width:50px; height:50px; background:rgba(255,255,255,0.6); border-radius:50%; left:25px; top:25px; }
+#jumpBtn { position: fixed; bottom:30px; right:30px; width:70px; height:70px; background:rgba(255,255,255,0.6); border-radius:50%; display:flex; justify-content:center; align-items:center; font-size:30px; cursor:pointer; z-index:5; }
+</style>
+</head>
+<body>
+
+<canvas id="game" width="900" height="500"></canvas>
+
+<div id="ui">
+  Level: <span id="levelNum">1</span> | Coins: <span id="coinNum">0</span>
+  <button id="shopBtn">Shop</button>
+  <button id="pauseBtn">⏸</button>
+  <button id="settingsBtn">⚙️</button>
+</div>
+
+<div id="startScreen">
+  <h1>Cozy Parkour Adventure</h1>
+  <button id="playBtn">Play</button>
+</div>
+
+<div id="pauseMenu">
+  <h2>Paused</h2>
+  <button id="resumeBtn">Resume</button>
+  <button id="restartBtn">Restart Level</button>
+  <button id="shopBtn2">Shop</button>
+  <button id="settingsBtn2">Settings</button>
+</div>
+
+<div id="shopUI">
+  <h2>Shop</h2>
+  <p>Coins: <span id="shopCoins">0</span></p>
+  <div id="shopItems">
+    <button data-color="#ff9eb5">Pink Hat - 5 Coins</button>
+    <button data-color="#9effa1">Green Scarf - 5 Coins</button>
+    <button data-color="#9ecbff">Blue Glasses - 5 Coins</button>
+  </div>
+  <button id="closeShop">Close</button>
+</div>
+
+<div id="settingsMenu">
+  <h2>Settings</h2>
+  <button id="toggleDayNight">Toggle Day/Night</button>
+  <button id="toggleLightDark">Toggle Light/Dark UI</button>
+  <button id="toggleHitbox">Toggle Hitboxes</button>
+  <button id="toggleSound">Toggle Sound</button>
+  <button id="closeSettings">Close</button>
+</div>
+
+<div class="joystick"><div class="knob"></div></div>
+<div id="jumpBtn">▲</div>
+
+<!-- Sounds -->
+<audio id="bgMusic" loop src="https://freesound.org/data/previews/348/348847_3248244-lq.mp3"></audio>
+<audio id="jumpS" src="https://freesound.org/data/previews/331/331912_3248244-lq.mp3"></audio>
+<audio id="coinS" src="https://freesound.org/data/previews/341/341695_3248244-lq.mp3"></audio>
+<audio id="levelS" src="https://freesound.org/data/previews/146/146725_3248244-lq.mp3"></audio>
+
+<script>
+// Canvas & context
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// Game state
+let gameState="start";
+let levelIndex=0;
+let coinsCollected=0;
+let avatarColor="#ff9eb5";
+let showHitboxes=false;
+let dayMode=true;
+let lightUI=true;
+let soundOn=true;
+
+// Player
+let player={x:50,y:400,w:40,h:40,dx:0,dy:0,jumping:false, face:{eyesOpen:true}};
+
+// UI elements
+const levelNum=document.getElementById("levelNum");
+const coinNum=document.getElementById("coinNum");
+const shopCoins=document.getElementById("shopCoins");
+const startScreen=document.getElementById("startScreen");
+const pauseMenu=document.getElementById("pauseMenu");
+const shopUI=document.getElementById("shopUI");
+const settingsMenu=document.getElementById("settingsMenu");
+
+// Sounds
+const bgMusic=document.getElementById("bgMusic");
+const jumpS=document.getElementById("jumpS");
+const coinS=document.getElementById("coinS");
+const levelS=document.getElementById("levelS");
+
+// Controls
+let keys={left:false,right:false,jump:false};
+document.addEventListener("keydown",e=>{
+  if(e.key==="ArrowLeft") keys.left=true;
+  if(e.key==="ArrowRight") keys.right=true;
+  if(e.key==="ArrowUp") keys.jump=true;
+});
+document.addEventListener("keyup",e=>{
+  if(e.key==="ArrowLeft") keys.left=false;
+  if(e.key==="ArrowRight") keys.right=false;
+  if(e.key==="ArrowUp") keys.jump=false;
+});
+
+// Mobile joystick
+const joystick=document.querySelector(".joystick");
+const knob=document.querySelector(".knob");
+let joystickActive=false;
+let startPos={x:0,y:0};
+let moveVector={x:0,y:0};
+
+joystick.addEventListener("touchstart",e=>{
+  joystickActive=true;
+  startPos.x=e.touches[0].clientX;
+  startPos.y=e.touches[0].clientY;
+});
+joystick.addEventListener("touchmove",e=>{
+  if(!joystickActive) return;
+  const dx=e.touches[0].clientX-startPos.x;
+  moveVector.x=Math.max(-1,Math.min(1,dx/50));
+  keys.left=moveVector.x< -0.2;
+  keys.right=moveVector.x>0.2;
+  knob.style.transform=`translate(${moveVector.x*25}px,0px)`;
+});
+joystick.addEventListener("touchend",e=>{
+  joystickActive=false; keys.left=false; keys.right=false;
+  knob.style.transform=`translate(0px,0px)`; moveVector.x=0;
+});
+
+// Jump button
+document.getElementById("jumpBtn").addEventListener("touchstart",()=>{
+  if(!keys.jump && soundOn) jumpS.play();
+  keys.jump=true;
+});
+document.getElementById("jumpBtn").addEventListener("touchend",()=>keys.jump=false);
+
+// Start
+document.getElementById("playBtn").addEventListener("click",()=>{
+  startScreen.style.display="none"; gameState="play"; if(soundOn) bgMusic.play();
+  resetLevel();
+});
+
+// Pause
+document.getElementById("pauseBtn").addEventListener("click",()=>{ gameState="pause"; pauseMenu.style.display="flex"; });
+document.getElementById("resumeBtn").addEventListener("click",()=>{ gameState="play"; pauseMenu.style.display="none"; });
+document.getElementById("restartBtn").addEventListener("click",()=>{ gameState="play"; pauseMenu.style.display="none"; resetLevel(); });
+
+// Shop
+function openShop(){ gameState="shop"; shopUI.style.display="flex"; updateShopUI(); }
+function closeShop(){ gameState="play"; shopUI.style.display="none"; }
+document.getElementById("shopBtn").addEventListener("click",openShop);
+document.getElementById("shopBtn2").addEventListener("click",openShop);
+document.getElementById("closeShop").addEventListener("click",closeShop);
+
+// Settings
+function openSettings(){ gameState="settings"; settingsMenu.style.display="flex"; }
+function closeSettings(){ gameState="play"; settingsMenu.style.display="none"; }
+document.getElementById("settingsBtn").addEventListener("click",openSettings);
+document.getElementById("settingsBtn2").addEventListener("click",openSettings);
+document.getElementById("closeSettings").addEventListener("click",closeSettings);
+document.getElementById("toggleDayNight").addEventListener("click",()=>{ dayMode=!dayMode; });
+document.getElementById("toggleLightDark").addEventListener("click",()=>{ lightUI=!lightUI; });
+document.getElementById("toggleHitbox").addEventListener("click",()=>{ showHitboxes=!showHitboxes; });
+document.getElementById("toggleSound").addEventListener("click",()=>{ soundOn=!soundOn; if(!soundOn) bgMusic.pause(); else bgMusic.play(); });
+
+// Shop Items
+document.querySelectorAll("#shopItems button").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    let cost=5;
+    if(coinsCollected>=cost){
+      coinsCollected-=cost;
+      avatarColor=btn.getAttribute("data-color");
+      updateUI();
+      updateShopUI();
+    }
+  });
+});
+
+// Levels
+let platforms=[], coins=[], spikes=[], goal={};
+const GRAVITY=0.5, SPEED=4, JUMP=-10;
+
+// Procedural level generator
+function generateLevel(index){
+  platforms=[{x:0,y:450,w:900,h:50}];
+  coins=[]; spikes=[]; goal={x:850,y:400,w:40,h:40};
+  let platY=400;
+  for(let i=0;i<5;i++){
+    let w=80+Math.random()*120;
+    let x=50+i*150+Math.random()*50;
+    platY-=Math.random()*60-30;
+    if(platY>400) platY=400; if(platY<200) platY=200;
+    platforms.push({x,y:platY,w,h:w});
+    if(Math.random()<0.7) coins.push({x:x+10,y:platY-30,taken:false});
+    if(Math.random()<0.3) spikes.push({x:x+30,y:platY-20,w:30,h:20});
+  }
+}
+
+// Reset Level
+function resetLevel(){
+  generateLevel(levelIndex);
+  player.x=50; player.y=400; player.dx=0; player.dy=0; player.jumping=false;
+  coins.forEach(c=>c.taken=false);
+  updateUI();
+}
+
+// Level Up
+function nextLevel(){
+  if(soundOn) levelS.play();
+  levelIndex++; resetLevel();
+}
+
+// Update UI
+function updateUI(){ levelNum.textContent=levelIndex+1; coinNum.textContent=coinsCollected; shopCoins.textContent=coinsCollected; }
+function updateShopUI(){ shopCoins.textContent=coinsCollected; }
+
+// Game Loop
+function update(){
+  if(gameState==="play"){
+    // Movement
+    player.dx=0; if(keys.left) player.dx=-SPEED; if(keys.right) player.dx=SPEED;
+    if(keys.jump && !player.jumping){ player.dy=JUMP; player.jumping=true; if(soundOn) jumpS.play(); }
+
+    // Physics
+    player.dy+=GRAVITY; player.x+=player.dx; player.y+=player.dy;
+
+    // Collisions
+    platforms.forEach(p=>{
+      if(player.x< p.x+p.w && player.x+player.w>p.x && player.y+player.h>p.y && player.y+player.h<p.y+player.h+player.dy){
+        player.y=p.y-player.h; player.dy=0; player.jumping=false;
+      }
+    });
+
+    // Coins
+    coins.forEach(c=>{
+      if(!c.taken && player.x<c.x+20 && player.x+player.w>c.x && player.y<c.y+20 && player.y+player.h>c.y){
+        c.taken=true; coinsCollected++; if(soundOn) coinS.play(); updateUI();
+      }
+    });
+
+    // Spikes
+    spikes.forEach(s=>{
+      if(player.x<s.x+s.w && player.x+player.w>s.x && player.y<s.y+s.h && player.y+player.h>s.y){
+        resetLevel();
+      }
+    });
+
+    // Goal
+    if(player.x<goal.x+goal.w && player.x+player.w>goal.x && player.y<goal.y+goal.h && player.y+player.h>goal.y){
+      nextLevel(); updateUI();
+    }
+
+    draw();
+  }
+  requestAnimationFrame(update);
+}
+
+// Draw
+function draw(){
+  ctx.fillStyle=dayMode?"#a7d7f9":"#001f3f"; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Platforms
+  ctx.fillStyle="#a7c7a9"; platforms.forEach(p=>ctx.fillRect(p.x,p.y,p.w,p.h));
+
+  // Coins
+  ctx.fillStyle="#ffe48a"; coins.forEach(c=>{ if(!c.taken) ctx.fillRect(c.x,c.y,20,20); });
+
+  // Spikes
+  ctx.fillStyle="#d9534f"; spikes.forEach(s=>ctx.fillRect(s.x,s.y,s.w,s.h));
+
+  // Goal
+  ctx.fillStyle="#ffd1a1"; ctx.fillRect(goal.x,goal.y,goal.w,goal.h);
+
+  // Player
+  ctx.fillStyle=avatarColor;
+  ctx.beginPath(); ctx.arc(player.x+player.w/2,player.y+player.h/2,player.w/2,0,Math.PI*2); ctx.fill();
+
+  // Face
+  ctx.fillStyle="#000"; ctx.beginPath(); ctx.arc(player.x+12,player.y+15,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(player.x+28,player.y+15,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(player.x+20,player.y+28,6,0,Math.PI); ctx.stroke();
+
+  // Hitboxes
+  if(showHitboxes){
+    ctx.strokeStyle="red"; ctx.strokeRect(player.x,player.y,player.w,player.h);
+    platforms.forEach(p=>ctx.strokeRect(p.x,p.y,p.w,p.h));
+    coins.forEach(c=>ctx.strokeRect(c.x,c.y,20,20));
+    spikes.forEach(s=>ctx.strokeRect(s.x,s.y,s.w,s.h));
+    ctx.strokeRect(goal.x,goal.y,goal.w,goal.h);
+  }
+}
+
+// Start loop
+update();
+</script>
+
+</body>
+</html>
